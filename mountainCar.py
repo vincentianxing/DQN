@@ -24,7 +24,7 @@ import torchvision.transforms as T
 # print(envs.registry.all())
 
 # get pendulum env
-env = gym.make('Pendulum-v1').unwrapped
+env = gym.make('MountainCar-v0').unwrapped
 
 # env.action_space, env.observation_space of type Space
 # env.observation_space.high/low to check bounds
@@ -137,13 +137,13 @@ _, _, screen_height, screen_width = init_screen.shape
 # get number of actions from gym action space
 n_states = env.observation_space.shape[0]
 print(n_states)
-n_actions = env.action_space.shape[0]
+n_actions = n_actions = env.action_space.n
 print(n_actions)
 
 # frozen network?
-policy_net = DQN(screen_height, screen_width, n_actions).to(device)
+# policy_net = DQN(screen_height, screen_width, n_actions).to(device)
 target_net = DQN(screen_height, screen_width, n_actions).to(device)
-target_net.load_state_dict(policy_net.state_dict())
+# target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
 # only update policy network parameters
@@ -245,7 +245,7 @@ for i_episode in range(num_episodes):
     for t in count():
         # Select and perform an action
         action = select_action(state)
-        _, reward, done, _ = env.step(action)
+        _, reward, done, _ = env.step(action.item())
         print(done)
         reward = torch.tensor([reward], device=device)
 
