@@ -2,6 +2,7 @@ import gym
 from gym import envs
 import math
 import random
+from gym.wrappers import atari_preprocessing
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -19,6 +20,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 # Vision tasks
 import torchvision.transforms as T
+
+from gym.wrappers import *
 
 # Atari roms
 # import ale_py.roms as roms
@@ -89,12 +92,14 @@ class DQN(nn.Module):
         self.bn3 = nn.BatchNorm2d(64)
 
         # Number of Linear input connections depends on output of conv2d layers
-        def conv2d_size_out(size, kernel_size=3, stride=1):
+        def conv2d_size_out(size, kernel_size=5, stride=2):
             return (size - (kernel_size - 1) - 1) // stride + 1
         convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
         convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
         linear_input_size = convw * convh * 32
         self.head = nn.Linear(linear_input_size, outputs)
+
+        # 512
 
     def forward(self, x):
         x = x.to(device)
@@ -244,6 +249,7 @@ def optimize_model():
 
 
 env = gym.wrappers.Monitor(env, './videos/' + 'dqn_pong_video')
+# env = AtariPreprocessing(env)
 num_episodes = 50
 for i_episode in range(num_episodes):
     # Initialize the environment and state
