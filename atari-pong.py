@@ -20,25 +20,27 @@ import torch.nn.functional as F
 # Vision tasks
 import torchvision.transforms as T
 
+from gym.wrappers import *
+import baseline_wrappers
+
 # Atari roms
 # import ale_py.roms as roms
 # print(roms.__all__)
 
-# Neural network
-# Optimization
-# Vision tasks
-
 # check available env
 # print(envs.registry.all())
 
-# get pendulum env
-env = gym.make('Pong-v0').unwrapped
+# get env
+env = gym.make('PongNoFrameskip-v4').unwrapped
+print("Original env:")
+print("obs: ", env.observation_space.shape)
+print("act: ", env.action_space)
 
 # env.action_space, env.observation_space of type Space
 # env.observation_space.high/low to check bounds
-# Box([-1. -1. -8.], [1. 1. 8.], (3,), float32)
-print("obs_space: ", env.observation_space)
-print("act_space: ", env.action_space)  # Box([-2.], [2.], (1,), float32)
+
+# print("obs_space: ", env.observation_space)
+# print("act_space: ", env.action_space)
 
 # set up matplotlib
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -54,8 +56,7 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
 
 
-# Replay memory storing transition observed by agent
-# sampled to get a decorrelated batch
+# Replay memory, storing transition observed by agent, sampled to get a decorrelated batch
 class ReplayMemory(object):
 
     def __init__(self, capacity):
@@ -71,66 +72,130 @@ class ReplayMemory(object):
     def __len__(self):
         return len(self.memory)
 
-# step(action) returns:
-# observation(object), reward(float), done(boolean), info(dict)
-# on each step, agent choose action, env returns obs and reward
 
-
-# define model Q-network
+# Define model Q-network
 class DQN(nn.Module):
 
-    def __init__(self, h, w, outputs):
+    def __init__(self, input_shape, n_actions):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(64)
 
-        # Number of Linear input connections depends on output of conv2d layers
-        def conv2d_size_out(size, kernel_size=3, stride=1):
-            return (size - (kernel_size - 1) - 1) // stride + 1
-        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
-        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
-        linear_input_size = convw * convh * 32
-        self.head = nn.Linear(linear_input_size, outputs)
+        # print(input_shape, input_shape[0])
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU()
+        )
+
+        conv_out_size = self._get_conv_out(input_shape)
+
+        self.fc = nn.Sequential(
+            nn.Linear(conv_out_size, 512),
+            nn.ReLU(),
+            nn.Linear(512, n_actions)
+        )
+
+    def _get_conv_out(self, shape):
+        o = self.conv(torch.zeros(1, *shape))
+        return int(np.prod(o.size()))
 
     def forward(self, x):
-        x = x.to(device)
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        return self.head(x.view(x.size(0), -1))
+        conv_out = self.conv(x).view(x.size(0), -1)
+        return self.fc(conv_out)
+
+
+# Test wrappers and network structure
+# env = baseline_wrappers.MaxAndSkipEnv(env)
+# env = baseline_wrappers.FireResetEnv(env)
+# env = baseline_wrappers.ProcessFrame84(env)
+# env = baseline_wrappers.ImageToPyTorch(env)
+# env = baseline_wrappers.BufferWrapper(env, 4)
+# print("obs: ", env.observation_space.shape)
+# print("act: ", env.action_space)
+# print()
+# print(DQN(env.observation_space.shape, env.action_space.n).to(device))
+
+# env2 = gym.make('PongNoFrameskip-v4').unwrapped
+# print("obs: ", env2.observation_space)
+# print("act: ", env2.action_space)
+# print()
+
+print("\nPreprocessed env: ")
+env = AtariPreprocessing(env)
+env = FrameStack(env, 4)
+print("obs: ", env.observation_space.shape)
+print("act: ", env.action_space)
+print()
+print(DQN(env.observation_space.shape, env.action_space.n).to(device))
+
+
+#     self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+#     self.bn1 = nn.BatchNorm2d(32)
+#     self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+#     self.bn2 = nn.BatchNorm2d(64)
+#     self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+#     self.bn3 = nn.BatchNorm2d(64)
+#
+#     conv_out_size = self.get_conv_out(input_shape)
+#
+#     self.conv_out = nn.Linear(conv_out_size, 512)
+#     self.out = nn.Linear(512, n_actions)
+#
+#
+# def get_conv_out(self, shape):
+#     o = self.conv(torch.zeros(1, *shape))
+#     return int(np.prod(o.size()))
+
+# Number of Linear input connections depends on output of conv2d layers
+# def conv2d_size_out(size, kernel_size=3, stride=1):
+#     return (size - (kernel_size - 1) - 1) // stride + 1
+# convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
+# convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
+# linear_input_size = convw * convh * 64
+# print(linear_input_size, outputs)
+# self.head = nn.Linear(linear_input_size, outputs)
+
+# def forward(self, x):
+#     x = x.to(device)
+#     x = F.relu(self.bn1(self.conv1(x)))
+#     x = F.relu(self.bn2(self.conv2(x)))
+#     x = F.relu(self.bn3(self.conv3(x)))
+#     x = F.relu(self.conv_out(x))
+#     x = self.out(x)
+#     return self.head(x.view(x.size(0), -1))
 
 
 # Input extraction
 # compose several transforms of image
-resize = T.Compose([T.ToPILImage(),  # Convert a tensor or an ndarray to PIL Image.
-                    T.Resize(40, interpolation=Image.CUBIC),
-                    T.ToTensor()])
+# resize = T.Compose([T.ToPILImage(),  # Convert a tensor or an ndarray to PIL Image.
+#                     T.Resize(40, interpolation=Image.CUBIC),
+#                     T.ToTensor()])
 
 
 def get_screen():
-    # Returned screen requested by gym is 400x600x3, but is sometimes larger
-    # such as 800x1200x3. Transpose it into torch order (CHW).
-    screen = env.render(mode='rgb_array').transpose((2, 0, 1))
-    # Cart is in the lower half, so strip off the top and bottom of the screen
-    _, screen_height, screen_width = screen.shape
-    # Convert to float, rescale, convert to torch tensor
-    # (this doesn't require a copy)
-    screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
-    screen = torch.from_numpy(screen)
-    # Resize, and add a batch dimension (BCHW)
-    return resize(screen).unsqueeze(0)
+    # # Returned screen requested by gym is 400x600x3, but is sometimes larger
+    # # such as 800x1200x3. Transpose it into torch order (CHW).
+    # screen = env.render(mode='rgb_array').transpose((2, 0, 1))
+    # # Cart is in the lower half, so strip off the top and bottom of the screen
+    # _, screen_height, screen_width = screen.shape
+    # # Convert to float, rescale, convert to torch tensor
+    # # (this doesn't require a copy)
+    # screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
+    # screen = torch.from_numpy(screen)
+    # # Resize, and add a batch dimension (BCHW)
+    # return resize(screen).unsqueeze(0)
+    return AtariPreprocessing._get_obs(env)
 
 
-env.reset()
-plt.figure()
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(),
-           interpolation='none')
-plt.title('Example extracted screen')
-plt.show()
+# env.reset()
+# plt.figure()
+# plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(),
+#            interpolation='none')
+# plt.title('Example extracted screen')
+# plt.show()
 
 BATCH_SIZE = 128
 GAMMA = 0.999
@@ -139,18 +204,19 @@ EPS_END = 0.05
 EPS_DECAY = 200
 TARGET_UPDATE = 10
 
-init_screen = get_screen()
-_, _, screen_height, screen_width = init_screen.shape
+# init_screen = get_screen()
+# _, _, screen_height, screen_width = init_screen.shape
 
-# get number of actions from gym action space
+# preprocessing
+# env = AtariPreprocessing(env)
+# env = FrameStack(env, 4)
+
 n_states = env.observation_space.shape[0]
-print(n_states)
 n_actions = n_actions = env.action_space.n
-print(n_actions)
 
 # frozen network?
-policy_net = DQN(screen_height, screen_width, n_actions).to(device)
-target_net = DQN(screen_height, screen_width, n_actions).to(device)
+policy_net = DQN(env.observation_space.shape, n_actions).to(device)
+target_net = DQN(env.observation_space.shape, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
@@ -166,14 +232,14 @@ def select_action(state):
     global steps_done
     sample = random.random()
     eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-        math.exp(-1. * steps_done / EPS_DECAY)
+                    math.exp(-1. * steps_done / EPS_DECAY)
     steps_done += 1
     if sample > eps_threshold:
         with torch.no_grad():
             # t.max(1) will return largest column value of each row.
             # second column on max result is index of where max element was
             # found, so we pick action with the larger expected reward.
-            print(policy_net(state))
+            # print(policy_net(state))
             return policy_net(state).max(1)[1].view(1, 1)
     else:
         return torch.tensor([[random.random()]], device=device, dtype=torch.long)
@@ -243,7 +309,9 @@ def optimize_model():
     optimizer.step()
 
 
-env = gym.wrappers.Monitor(env, './videos/' + 'dqn_pong_video')
+# Training
+# env = gym.wrappers.Monitor(env, './videos/' + 'dqn_pong_video', force=True)
+
 num_episodes = 50
 for i_episode in range(num_episodes):
     # Initialize the environment and state
