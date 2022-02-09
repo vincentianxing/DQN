@@ -10,8 +10,9 @@ import matplotlib.pyplot as plt
 import stable_baselines3
 
 import torch
-from torch import nn
 import torchvision
+from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
@@ -23,8 +24,9 @@ from preprocess import *
 from gym.wrappers import *
 
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
+import gc
 
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,7 +51,6 @@ env = FrameStack(env, 4)
 
 print("obs: ", env.observation_space.shape)
 print("act: ", env.action_space)
-
 
 Transition = namedtuple(
     'Transition',
@@ -83,7 +84,14 @@ class ReplayMemory(object):
 # Optimization
 def optimize(q_value, action, double_q, target_q, done, reward):
     gamma = 0.99
-    loss_fn = nn.SmoothL1Loss(reduction='mean')
+    # Use L2 loss
+    # loss_fn = nn.MSELoss(reduction='mean')
+
+    # Use L1 loss
+    # loss_fn = nn.SmoothL1Loss(reduction='mean')
+
+    # Use Huber loss, same as L1 when default delta=1.0
+    loss_fn = nn.HuberLoss(reduction='mean')
 
     # Calculate Q(s, a; theta_i)
     q_value = q_value.to(device)
@@ -93,8 +101,11 @@ def optimize(q_value, action, double_q, target_q, done, reward):
     done = done.to(device)
     reward = reward.to(device)
 
+    # print(q_value)
     q_sampled_action = q_value.gather(-1, action.to(torch.long).unsqueeze(-1)).squeeze(-1)
-    with torch.no_grad():
+    # print(q_sampled_action)
+
+    with torch.no_grad():  # done = 1
         # Get best action: argmax Q(s', a'; theta_i)
         next_action = torch.argmax(double_q, -1)
 
@@ -102,13 +113,17 @@ def optimize(q_value, action, double_q, target_q, done, reward):
         q_next_action = target_q.gather(-1, next_action.unsqueeze(-1)).squeeze(-1)
 
         # Update q value
-        q_update = reward + gamma * q_next_action
+        q_update = reward + gamma * q_next_action * (1 - done.long())
+        # if done == 1
+        # q_update = reward
+        # else...
         # q_update = reward + gamma * q_next_action * (1 - done)
 
     # Error
     td_error = q_sampled_action - q_update
 
     # Loss
+    # TODO: .detach().item() only gets value
     loss = loss_fn(q_sampled_action, q_update)
 
     # loss = torch.mean(weights * losses)
@@ -116,19 +131,19 @@ def optimize(q_value, action, double_q, target_q, done, reward):
 
 
 # Initialize
-updates = 1000000
-epochs = 10000
-update_target_model_every = 250
-learning_rate = 1e-4
+frames = 20000000
+random_frames = 50000  # 50000
+update_target_model_every = 250  # 250
 batch_size = 32
-memory = ReplayMemory(1000000)
+memory = ReplayMemory(500000)  # 1000000
 
 # Neural network
 model = DQN().to(device)
 target_model = DQN().to(device)
 
 # Optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
+learning_rate = 1e-5
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 # Epsilon-greedy choosing action
 exploration_rate = 1.0
@@ -152,11 +167,16 @@ def choose_action(q_value):
 
 # Scale observations from [0, 255] to [0, 1]
 def obs_to_torch(obs: np.ndarray) -> torch.Tensor:
-    return torch.tensor(obs, dtype=torch.float32, device=device) / 255.
+    return torch.tensor(obs, dtype=torch.float32, device=device) / 255
+
+
+lives = 0
 
 
 # Sample from experience
 def simulate(state):
+    global lives
+    reset = False
     with torch.no_grad():
         state = state.__array__()
         if device == "cuda":
@@ -167,6 +187,17 @@ def simulate(state):
         q_value = model(obs_to_torch(state))
         action = choose_action(q_value)
         next_state, reward, done, info = env.step(action)
+
+        # Passing the terminal flag to the replay memory when a life is lost
+        # without resetting the game
+        reset = done
+        new_lives = env.ale.lives()
+        if new_lives < lives:
+            done = True
+        lives = new_lives
+
+        # Clipping reward
+        reward = clip_reward(reward)
         # env.render()
 
         if device == "cuda":
@@ -182,19 +213,32 @@ def simulate(state):
             r = torch.tensor([reward])
             d = torch.tensor([done])
 
+        # Store the experience
         memory.push(state, action, next_state, r, d)
         state = next_state
-        return state, reward, done
+        return state, reward, done, reset
+
+
+def clip_reward(r):
+    if r > 0:
+        return 1
+    elif r == 0:
+        return 0
+    else:
+        return -1
+
 
 rewards_plot = []
 
+
+# Plot with Matplotlib
 def plot():
     plt.clf()
     episode_rewards_plot = torch.tensor(rewards_plot, dtype=torch.float)
     # average_rewards_plot = torch.tensor(average_rewards, dtype=torch.float)
     # mean_rewards_plot = torch.tensor(mean_rewards, dtype=torch.float)
     plt.title('Training...')
-    plt.xlabel('Frames')
+    plt.xlabel('Steps')
     plt.ylabel('Rewards')
     plt.plot(episode_rewards_plot.numpy())
     # plt.plot(average_rewards_plot.numpy())
@@ -207,39 +251,51 @@ def plot():
     plt.pause(0.01)
 
 
+# Plot with Tensorboard
+writer = SummaryWriter()
+
 # Training
 target_model.load_state_dict(model.state_dict())
 obs = env.reset()
 sum_reward = 0
+episode = 0
 
-for update in range(updates):
-    # sum_reward = 0
+for frame in range(frames):
 
-    next_obs, reward, done = simulate(obs)
+    next_obs, reward, done, reset = simulate(obs)
     obs = next_obs
     sum_reward += reward
 
-    if done:
-        print(update, end=" -- ")
+    if reset:
+        print(frame, end=" -- ")
+        print(episode, end=" -- ")
         print("reward: ", sum_reward, end=" -- ")
         print("epsilon: ", exploration_rate)
         obs = env.reset()
-        sum_reward = 0
-        if len(memory) > 10000:
+        if len(memory) > random_frames:
+            episode += 1
             rewards_plot.append(sum_reward)
             plot()
+            writer.add_scalar("train", sum_reward, frame)
+        sum_reward = 0
 
+    # torch.cuda.empty_cache()
 
-    if len(memory) > 10000:
+    if len(memory) > random_frames:
         # Decrease exploration_rate
+        # TODO: schedule exploration rate until 1000000 frames
         exploration_rate = exploration_rate * exploration_rate_decay
         exploration_rate = max(exploration_rate_min, exploration_rate)
-        for _ in range(4):
-            env.render()
+
+        # Optimize
+        if frame % 1 == 0:
+            # env.render()
+
+            # gc.collect()
+
             # Sample from replay memory
-            samples = memory.sample(batch_size) # list of batch_size
+            samples = memory.sample(batch_size)  # list of batch_size
             state, action, next_state, reward, done = map(torch.stack, zip(*samples))
-            # return state, next_state, action.squeeze(), reward.squeeze(), done.squeeze()
 
             # Get predicted q-value
             q = model(obs_to_torch(state.squeeze()))
@@ -267,5 +323,9 @@ for update in range(updates):
             optimizer.step()
 
         # Update target network
-        if update % update_target_model_every == 0:
+        if frame % update_target_model_every == 0:
             target_model.load_state_dict(model.state_dict())
+
+env.close()
+writer.flush()
+writer.close()
