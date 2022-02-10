@@ -142,7 +142,7 @@ model = DQN().to(device)
 target_model = DQN().to(device)
 
 # Optimizer
-learning_rate = 1e-5
+learning_rate = 3e-5
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 # Epsilon-greedy choosing action
