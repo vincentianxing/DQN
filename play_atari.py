@@ -267,9 +267,11 @@ for frame in range(frames):
     sum_reward += reward
 
     if reset:
+        mean_reward = np.mean(rewards_plot[-50:])
         print(frame, end=" -- ")
         print(episode, end=" -- ")
         print("reward: ", sum_reward, end=" -- ")
+        print("last 50 mean:, ", mean_reward, end= " -- ")
         print("epsilon: ", exploration_rate)
         obs = env.reset()
         if len(memory) > random_frames:
@@ -283,8 +285,13 @@ for frame in range(frames):
 
     if len(memory) > random_frames:
         # Decrease exploration_rate
-        # TODO: schedule exploration rate until 1000000 frames
-        exploration_rate = exploration_rate * exploration_rate_decay
+        # DONE: schedule exploration rate until some frames
+        slope = -(1.0 - exploration_rate_min) / 500000
+        intercept = 1.0 - slope * random_frames
+
+        exploration_rate = slope * frame + intercept
+
+        # exploration_rate = exploration_rate * exploration_rate_decay
         exploration_rate = max(exploration_rate_min, exploration_rate)
 
         # Optimize

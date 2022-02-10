@@ -11,6 +11,9 @@
 * How to locate memory consuming objects
 * `torch.cuda.empty_cache()`
 
+`tail -f /var/log/syslog` - permission denied
+
+
 ## Schedule
 
 Feb 1
