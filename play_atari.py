@@ -142,7 +142,7 @@ model = DQN().to(device)
 target_model = DQN().to(device)
 
 # Optimizer
-learning_rate = 3e-5
+learning_rate = 1e-5
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 # Epsilon-greedy choosing action
@@ -286,7 +286,7 @@ for frame in range(frames):
     if len(memory) > random_frames:
         # Decrease exploration_rate
         # DONE: schedule exploration rate until some frames
-        slope = -(1.0 - exploration_rate_min) / 500000
+        slope = -(1.0 - exploration_rate_min) / 1000000
         intercept = 1.0 - slope * random_frames
 
         exploration_rate = slope * frame + intercept
