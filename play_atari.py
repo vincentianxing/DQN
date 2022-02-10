@@ -271,7 +271,7 @@ for frame in range(frames):
         print(frame, end=" -- ")
         print(episode, end=" -- ")
         print("reward: ", sum_reward, end=" -- ")
-        print("last 50 mean:, ", mean_reward, end= " -- ")
+        print("last 50 mean: ", mean_reward, end= " -- ")
         print("epsilon: ", exploration_rate)
         obs = env.reset()
         if len(memory) > random_frames:
