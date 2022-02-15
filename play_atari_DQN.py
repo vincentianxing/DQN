@@ -17,8 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack
 
-import model
-from model import DQN
+import DQN_model
+from DQN_model import DQN
 import preprocess
 from preprocess import *
 from gym.wrappers import *
@@ -39,10 +39,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print("obs: ", env.observation_space.shape)
 # print("act: ", env.action_space)
 
-env = gym.make('BreakoutNoFrameskip-v4').unwrapped
+env = gym.make('PongNoFrameskip-v4').unwrapped
 
 env = AtariPreprocessing(env)
 env = FrameStack(env, 4)
+print(env.reset())
 
 # env = SkipFrame(env, skip=4)
 # env = GrayScaleObservation(env)
@@ -114,10 +115,6 @@ def optimize(q_value, action, double_q, target_q, done, reward):
 
         # Update q value
         q_update = reward + gamma * q_next_action * (1 - done.long())
-        # if done == 1
-        # q_update = reward
-        # else...
-        # q_update = reward + gamma * q_next_action * (1 - done)
 
     # Error
     td_error = q_sampled_action - q_update
@@ -131,9 +128,9 @@ def optimize(q_value, action, double_q, target_q, done, reward):
 
 
 # Initialize
-frames = 20000000
+frames = 10000000
 random_frames = 50000  # 50000
-update_target_model_every = 250  # 250
+update_target_model_every = 10000  # 250
 batch_size = 32
 memory = ReplayMemory(500000)  # 1000000
 
@@ -194,6 +191,7 @@ def simulate(state):
         new_lives = env.ale.lives()
         if new_lives < lives:
             done = True
+        # print(new_lives, lives, done, reset)
         lives = new_lives
 
         # Clipping reward
@@ -235,19 +233,10 @@ rewards_plot = []
 def plot():
     plt.clf()
     episode_rewards_plot = torch.tensor(rewards_plot, dtype=torch.float)
-    # average_rewards_plot = torch.tensor(average_rewards, dtype=torch.float)
-    # mean_rewards_plot = torch.tensor(mean_rewards, dtype=torch.float)
     plt.title('Training...')
     plt.xlabel('Steps')
     plt.ylabel('Rewards')
     plt.plot(episode_rewards_plot.numpy())
-    # plt.plot(average_rewards_plot.numpy())
-    # plt.plot(mean_rewards_plot.numpy())
-    # Take x episode averages and plot them too
-    # if len(episode_rewards_plot) >= 100:
-    #     means = episode_rewards_plot.unfold(0, 100, 1).mean(1).view(-1)
-    #     means = torch.cat((torch.zeros(99), means))
-    #     plt.plot(means.numpy())
     plt.pause(0.01)
 
 
@@ -271,7 +260,7 @@ for frame in range(frames):
         print(frame, end=" -- ")
         print(episode, end=" -- ")
         print("reward: ", sum_reward, end=" -- ")
-        print("last 50 mean: ", mean_reward, end= " -- ")
+        print("last 50 mean: ", mean_reward, end=" -- ")
         print("epsilon: ", exploration_rate)
         obs = env.reset()
         if len(memory) > random_frames:
@@ -281,24 +270,18 @@ for frame in range(frames):
             writer.add_scalar("train", sum_reward, frame)
         sum_reward = 0
 
-    # torch.cuda.empty_cache()
-
     if len(memory) > random_frames:
-        # Decrease exploration_rate
-        # DONE: schedule exploration rate until some frames
+
+        # Schedule exploration rate
         slope = -(1.0 - exploration_rate_min) / 1000000
         intercept = 1.0 - slope * random_frames
-
         exploration_rate = slope * frame + intercept
-
         # exploration_rate = exploration_rate * exploration_rate_decay
         exploration_rate = max(exploration_rate_min, exploration_rate)
 
         # Optimize
         if frame % 1 == 0:
-            # env.render()
-
-            # gc.collect()
+            env.render()
 
             # Sample from replay memory
             samples = memory.sample(batch_size)  # list of batch_size

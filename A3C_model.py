@@ -1,12 +1,12 @@
-# DQN neural network architecture
+# A3C neural network architecture
 # Vincent Zhu
 
 import torch
 from torch import nn
 
 
-class DQN(nn.Module):
-    def __init__(self, input_size=4, n_actions=4):
+class A3C(nn.Module):
+    def __init__(self, input_size=4, n_actions=6):
         super().__init__()
 
         self.conv = nn.Sequential(
@@ -27,11 +27,27 @@ class DQN(nn.Module):
         self.final_activation = nn.ReLU()
 
         # Output layer: a fully-connected linear layer with a single output for each valid action.
-        self.head = nn.Sequential(
-            nn.Linear(in_features=512, out_features=256),
+        # self.head = nn.Sequential(
+        #     nn.Linear(in_features=512, out_features=256),
+        #     nn.ReLU(),
+        #     nn.Linear(in_features=256, out_features=n_actions),
+        # )
+
+        # Policy (actor)
+        self.policy = nn.Sequential(
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(in_features=256, out_features=n_actions),
+            nn.Linear(256, n_actions)
         )
+
+        # Value (critic)
+        self.value = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+        self.distribution = torch.distributions.Categorical
 
     def forward(self, x: torch.Tensor):
         # Use GPU
@@ -48,9 +64,10 @@ class DQN(nn.Module):
         x = self.final_activation(self.final_layer(x))
 
         # Output layer
-        q = self.head(x)
+        action_value = self.policy(x)
+        state_value = self.value(x)
 
-        return q
+        return action_value, state_value
 
 
 
