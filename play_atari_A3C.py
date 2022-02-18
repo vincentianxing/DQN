@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 try:
-     set_start_method('spawn')
+    set_start_method('spawn')
 except RuntimeError:
     pass
 
@@ -47,6 +47,7 @@ Transition = namedtuple(
 
 # Global values
 GAMMA = 0.99
+
 
 # Scale observations from [0, 255] to [0, 1]
 def obs_to_torch(obs: np.ndarray) -> torch.Tensor:
@@ -67,6 +68,7 @@ def clip_reward(r):
     else:
         return -1
 
+
 class SharedAdam(torch.optim.Adam):
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.99), eps=1e-8,
                  weight_decay=0):
@@ -83,21 +85,28 @@ class SharedAdam(torch.optim.Adam):
                 state['exp_avg'].share_memory_()
                 state['exp_avg_sq'].share_memory_()
 
+
 # Choose action based on model
 def choose_action(model, state):
     model.eval()
     logits, values = model(state)
     prob = F.softmax(logits, dim=1).data
     m = model.distribution(prob)
-    return m.sample().numpy()[0]
+    a = m.sample().numpy()[0]
+    # print(a)
+    return a
 
 
 # Calculate loss
 def loss_func(model, state, action, state_value):
     model.train()
-    logits, values = model(state.squeeze())
+    # print(state.shape, state.size(dim=0))
+    # TODO: no squeeze if [1, 4, 84, 84, 1]
+    if state.size(dim=0) == 1:
+        logits, values = model(state.squeeze().unsqueeze(0))
+    else:
+        logits, values = model(state.squeeze())
     td_error = state_value - values
-
     loss_value = td_error.pow(2)
 
     prob = F.softmax(logits, dim=1)
@@ -123,12 +132,11 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
     buffer_v_target.reverse()
 
     # Calculate loss
-    print(len(buffer_s))
+    # print(len(buffer_s), "!!!!!!!!!!")
     loss = loss_func(
         local_net,
-        wrap_to_torch(np.array(buffer_s)), # vstack
-        wrap_to_torch(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else wrap_to_torch(
-            np.vstack(buffer_a)),
+        wrap_to_torch(np.array(buffer_s)),  # vstack # TODO: no squeeze if buffer size=1
+        wrap_to_torch(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else wrap_to_torch(np.vstack(buffer_a)),
         wrap_to_torch(np.array(buffer_v_target)[:, None])
     )
 
@@ -151,11 +159,13 @@ def global_update(global_ep, global_ep_r, ep_r, res_queue, name):
             global_ep_r.value = ep_r
         else:
             global_ep_r.value = global_ep_r.value * 0.99 + ep_r * 0.01
+    # TODO: reward always 0.0
     res_queue.put(global_ep_r.value)
+    print(name, ep_r)
     print(
         name,
         "ep: ", global_ep.value,
-        " -- ep reward: %.0f", global_ep_r.value
+        " -- ep reward: ", global_ep_r.value
     )
 
 
@@ -168,7 +178,8 @@ class Worker(mp.Process):
         self.global_net, self.optimizer = global_net, optimizer
         # self.local_net = A3C().to(device)
         self.local_net = A3C()
-        self.env = gym.make('PongNoFrameskip-v4').unwrapped
+        # self.env = gym.make('PongNoFrameskip-v4').unwrapped
+        self.env = gym.make('BreakoutNoFrameskip-v4').unwrapped
         # self.env = AtariPreprocessing(self.env)
         # self.env = FrameStack(self.env, 4)
 
@@ -178,35 +189,42 @@ class Worker(mp.Process):
         self.env = FrameStack(self.env, num_stack=4)
 
     def run(self):
-        print(self.name, 'running')
+        # print(self.name, 'running')
         total_step = 1
         while self.global_ep.value < 3000:
             state = self.env.reset()
             buffer_s, buffer_a, buffer_r = [], [], []
             ep_r = 0.
             while True:
-                print(self.name, 'loop2')
-                if self.name == 'w00':
-                    self.env.render()
+                # print(self.name, 'loop2')
+                # if self.name == 'w00':
+                self.env.render()
 
                 # Perform action according to policy
+                # TODO: board not moving?
                 action = choose_action(self.local_net, obs_to_torch(state).squeeze().unsqueeze(0))
                 next_state, reward, done, info = self.env.step(action)
                 reward = clip_reward(reward)
+
+                if done:
+                    print("----------")
+                    reward = 0  # TODO
+                ep_r += reward
 
                 buffer_s.append(state)
                 buffer_a.append(action)
                 buffer_r.append(reward)
 
-                if total_step % 5 == 0 or done:
+                if total_step % 10 == 0 or done:
                     # Sync
-                    print(self.name, "sync")
-                    sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a, buffer_r, GAMMA)
+                    # print(self.name, "sync")
+                    sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a,
+                         buffer_r, GAMMA)
                     buffer_s, buffer_a, buffer_r = [], [], []
-                    print(self.name, "sync done")
+                    # print(self.name, "sync done")
 
                     if done:
-                        print(self.name, "update")
+                        # print(self.name, "update")
                         global_update(self.global_ep, self.global_ep_r, ep_r, self.res_queue, self.name)
                         break
 
@@ -216,44 +234,37 @@ class Worker(mp.Process):
         self.res_queue.put(None)
 
 
-def process_queue(q, l):
-    while True:
-        print("before")
-        r = q.get()
-        print("after")
-        if r is not None:
-            l.append(r)
-        else:
-            break
-
 if __name__ == "__main__":
     # global_net = A3C().to(device)
     global_net = A3C()
     global_net.share_memory()
     # optimizer = torch.optim.Adam(global_net.parameters(), lr=1e-5)
-    optimizer = SharedAdam(global_net.parameters())
+    optimizer = SharedAdam(global_net.parameters(), lr = 1e-5)
     global_ep = mp.Value('i', 0)
     global_ep_r = mp.Value('d', 0.)
     res_queue = mp.Queue()
 
     # Training in parallel
     workers = [Worker(global_net, optimizer, global_ep, global_ep_r, res_queue, i)
-               for i in range(mp.cpu_count())]
+               for i in range(mp.cpu_count()-4)]
     [w.start() for w in workers]
-    res = []  # episode reward
-
-    # print(res_queue)
+    # res = []  # episode reward
 
     # while True:
+    #     # print("try to get")
     #     r = res_queue.get()
+    #     # print("get done")
+    #     r_clone = r
     #     if r is not None:
-    #         res.append(r)
+    #         res.append(r_clone)
     #     else:
     #         break
+    # print("res: ", res)
 
     [w.join() for w in workers]
 
     # plt.plot(res)
     # plt.ylabel('Moving average ep reward')
     # plt.xlabel('Step')
+    # plt.pause(0.01)
     # plt.show()

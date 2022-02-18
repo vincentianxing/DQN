@@ -39,7 +39,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print("obs: ", env.observation_space.shape)
 # print("act: ", env.action_space)
 
-env = gym.make('PongNoFrameskip-v4').unwrapped
+# env = gym.make('PongNoFrameskip-v4').unwrapped
+env = gym.make('SpaceInvadersNoFrameskip-v4').unwrapped
 
 env = AtariPreprocessing(env)
 env = FrameStack(env, 4)
@@ -139,7 +140,7 @@ model = DQN().to(device)
 target_model = DQN().to(device)
 
 # Optimizer
-learning_rate = 1e-5
+learning_rate = 3e-5
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 # Epsilon-greedy choosing action
@@ -195,7 +196,7 @@ def simulate(state):
         lives = new_lives
 
         # Clipping reward
-        reward = clip_reward(reward)
+        # reward = clip_reward(reward)
         # env.render()
 
         if device == "cuda":

@@ -6,7 +6,7 @@ from torch import nn
 
 
 class A3C(nn.Module):
-    def __init__(self, input_size=4, n_actions=6):
+    def __init__(self, input_size=4, n_actions=4):
         super().__init__()
 
         self.conv = nn.Sequential(
