@@ -50,9 +50,78 @@
 premature convergence to suboptimal deterministic policies. 
 
 
-## Questions
-* LSTM?
+## Wildfire Model
+Agents
+* type
+* (presence)
 
+States
+* #fire + #agent:
+* network
+  * feed forward
+  
+* 3x3x2
+  * 1 channel for number of agents at each location
+  * 1 channel for fire intensity at each location
+* To incorporate agent type: add more layers for each type of agents
+
+* Use 2 network for 2 inputs: fire intensity or number of agents
+
+* // (x, y, F0, F1, F2, F3)
+
+Actions
+* up
+* down
+* left 
+* right 
+* extinguish (not moving on fire location)
+* refill (not moving on non-fire location)
+
+* joint actions? individual policy?
+
+Transition
+* T(s, a, a_joint, s') = P(s'|s, a, a_joint)
+
+Reward
+* R(s, a)
+  * intensity
+    * no_fire
+    * burned_out
+  * is extinguish on fire
+
+
+## Questions
+* Policy gradient method, affect prob?
+  * Breakout: ['NOOP', 'FIRE', 'RIGHT', 'LEFT']
+  * Pong: ['NOOP', 'FIRE', 'RIGHT', 'LEFT', 'RIGHTFIRE', 'LEFTFIRE']
+* When print out the prob, looks like the same state?
+* Shape of state affect learning?
+* From softmax function: ValueError: Expected parameter probs (Tensor of shape (1, 4)) of distribution Categorical(probs: torch.Size([1, 4])) to satisfy the constraint Simplex(), but found invalid values:
+tensor([[nan, nan, nan, nan]])
+
+
+## misc
+* 19:40, run1
+
+## Skeleton
+* Abstract
+* Introduction
+  * Multi-agent system
+  * Reinforcement learning
+  * (Open environment)
+* Related work
+  * DQN, A3C, PPO
+* Problem formulation
+  * Model
+    * How to represent multi-agent interaction
+    * (How to deal with openness)
+    * Optimal policy
+* Proposed solution
+  * Motivation
+  * Framework
+  * Neural network
+* Experiments
+* Conclusions and discussions
 
 ## Schedule
 

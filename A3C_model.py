@@ -3,6 +3,7 @@
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class A3C(nn.Module):
@@ -68,6 +69,43 @@ class A3C(nn.Module):
         state_value = self.value(x)
 
         return action_value, state_value
+
+    # Choose action based on model
+    def choose_action(self, state):
+        self.eval()
+        logits, values = self(state)
+        # print(logits)
+        prob = F.softmax(logits, dim=1).data
+        print(prob)
+        m = self.distribution(prob)  # TODO: got [nan, nan, nan, nan]
+        a = m.sample().numpy()[0]
+        return a
+
+    # Calculate loss
+    def loss_func(self, state, action, state_value):
+        self.train()
+        if state.size(dim=0) == 1:  # no squeeze if [1, 4, 84, 84, 1]
+            state = state.__array__()
+            state = torch.tensor(state)
+            state = state.squeeze()
+            state = state.unsqueeze(0)
+            logits, values = self(state)
+        else:  # squeeze if [n, 4, 84, 84, 1]
+            state = state.__array__()
+            state = torch.tensor(state)
+            state = state.squeeze()
+            logits, values = self(state)
+
+        td_error = state_value - values
+        loss_value = td_error.pow(2)
+
+        prob = F.softmax(logits, dim=1)
+        m = self.distribution(prob)
+        loss_policy = -(m.log_prob(action) * td_error.detach().squeeze())
+
+        total_loss = (loss_value + loss_policy).mean()
+        return total_loss
+
 
 
 

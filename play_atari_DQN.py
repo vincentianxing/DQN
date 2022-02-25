@@ -39,8 +39,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print("obs: ", env.observation_space.shape)
 # print("act: ", env.action_space)
 
+env = gym.make('BreakoutNoFrameskip-v4').unwrapped
 # env = gym.make('PongNoFrameskip-v4').unwrapped
-env = gym.make('SpaceInvadersNoFrameskip-v4').unwrapped
+# env = gym.make('SpaceInvadersNoFrameskip-v4').unwrapped
 
 env = AtariPreprocessing(env)
 env = FrameStack(env, 4)
@@ -130,7 +131,7 @@ def optimize(q_value, action, double_q, target_q, done, reward):
 
 # Initialize
 frames = 10000000
-random_frames = 50000  # 50000
+random_frames = 10000  # 50000
 update_target_model_every = 10000  # 250
 batch_size = 32
 memory = ReplayMemory(500000)  # 1000000
@@ -182,6 +183,7 @@ def simulate(state):
         else:
             state = torch.tensor(state)
         state = state.unsqueeze(0)
+        print("simulate shape: ", obs_to_torch(state).shape)
         q_value = model(obs_to_torch(state))
         action = choose_action(q_value)
         next_state, reward, done, info = env.step(action)
@@ -252,7 +254,10 @@ episode = 0
 
 for frame in range(frames):
 
+    print(obs.shape)
     next_obs, reward, done, reset = simulate(obs)
+    # torch.set_printoptions(profile="full")
+    print(next_obs.shape)
     obs = next_obs
     sum_reward += reward
 
