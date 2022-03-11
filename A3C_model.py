@@ -65,21 +65,21 @@ class A3C(nn.Module):
         x = self.final_activation(self.final_layer(x))
 
         # Output layer
-        action_value = self.policy(x)
-        state_value = self.value(x)
+        logits = self.policy(x)
+        values = self.value(x)
 
-        return action_value, state_value
+        return logits, values
 
     # Choose action based on model
     def choose_action(self, state):
         self.eval()
-        logits, values = self(state)
+        logits, values = self.forward(state)
         # print(logits)
         prob = F.softmax(logits, dim=1).data
-        print(prob)
+        # print(prob)
         m = self.distribution(prob)  # TODO: got [nan, nan, nan, nan]
         a = m.sample().numpy()[0]
-        return a
+        return a, prob
 
     # Calculate loss
     def loss_func(self, state, action, state_value):
@@ -89,14 +89,17 @@ class A3C(nn.Module):
             state = torch.tensor(state)
             state = state.squeeze()
             state = state.unsqueeze(0)
-            logits, values = self(state)
+            logits, values = self.forward(state.transpose(1, 3))
+
         else:  # squeeze if [n, 4, 84, 84, 1]
             state = state.__array__()
             state = torch.tensor(state)
             state = state.squeeze()
-            logits, values = self(state)
+            logits, values = self.forward(state.transpose(1, 3))
 
-        td_error = state_value - values
+        # print(state_value.shape)
+        # print(values.squeeze().shape)
+        td_error = state_value - values.squeeze()
         loss_value = td_error.pow(2)
 
         prob = F.softmax(logits, dim=1)

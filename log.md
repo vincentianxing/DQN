@@ -99,6 +99,8 @@ Reward
 * From softmax function: ValueError: Expected parameter probs (Tensor of shape (1, 4)) of distribution Categorical(probs: torch.Size([1, 4])) to satisfy the constraint Simplex(), but found invalid values:
 tensor([[nan, nan, nan, nan]])
 
+* Local net not loading shared net param
+* Really big prob caused by Atari env stuck
 
 ## misc
 * 19:40, run1

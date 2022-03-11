@@ -21,7 +21,7 @@ from A3C_model import A3C
 import preprocess
 from preprocess import *
 from gym.wrappers import *
-# import optim
+from atari_wrappers import *
 
 import warnings
 
@@ -83,7 +83,7 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
     if done:
         state_value = 0.  # terminal state
     else:
-        state_value = local_net(obs_to_torch(next_state).squeeze().unsqueeze(0))[-1].data.numpy()[0, 0]
+        state_value = local_net(obs_to_torch(next_state).squeeze().unsqueeze(0).transpose(1, 3))[-1].data.numpy()[0, 0]
 
     # Store in buffer
     buffer_v_target = []
@@ -99,26 +99,31 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
         wrap_to_torch(np.vstack(buffer_s)),
         wrap_to_torch(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else wrap_to_torch(
             np.vstack(buffer_a)),
-        wrap_to_torch(np.array(buffer_v_target)[:, None])
+        wrap_to_torch(np.array(buffer_v_target))
     )
-    # print(loss)
+    # print("loss calculated")
 
     # Calculate local gradients and push to global
     optimizer.zero_grad()
     loss.backward()
+    # print("loss backward")
 
     # Clip
     torch.nn.utils.clip_grad_norm_(local_net.parameters(), 40)
+    # print("clip")
 
     for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
-        if global_param.grad is not None:
-            return
+        # if global_param.grad is not None:
+        #     return
         global_param._grad = local_param.grad
+    # print("pushed")
 
     optimizer.step()
+    # print("step")
 
     # Pull global parameters
     local_net.load_state_dict(global_net.state_dict())
+    # print("loaded!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
 
 def global_update(global_ep, global_ep_r, ep_r, res_queue, name):
@@ -153,7 +158,9 @@ class Worker(mp.Process):
         # self.env = gym.make('PongNoFrameskip-v4').unwrapped
         # ['NOOP', 'FIRE', 'RIGHT', 'LEFT', 'RIGHTFIRE', 'LEFTFIRE']
 
-        self.env = gym.make('BreakoutNoFrameskip-v4').unwrapped
+        # self.env = gym.make('BreakoutNoFrameskip-v4').unwrapped
+        self.env = make_atari('BreakoutNoFrameskip-v4')
+        self.env = wrap_deepmind(self.env, episode_life=False, frame_stack=True)
         # ['NOOP', 'FIRE', 'RIGHT', 'LEFT']
 
         # self.env = AtariPreprocessing(self.env)
@@ -161,21 +168,26 @@ class Worker(mp.Process):
 
         print(self.env.unwrapped.get_action_meanings())
 
-        self.env = SkipFrame(self.env, skip=4)
-        self.env = GrayScaleObservation(self.env)
-        self.env = ResizeObservation(self.env, shape=84)
-        self.env = FrameStack(self.env, num_stack=4)
+        # self.env = SkipFrame(self.env, skip=4)
+        # self.env = GrayScaleObservation(self.env)
+        # self.env = ResizeObservation(self.env, shape=84)
+        # self.env = FrameStack(self.env, num_stack=4)
 
         self.lives = 0
 
     def run(self):
+        p = 0
         total_step = 1
-        while self.global_ep.value < 10000:
+        while self.global_ep.value < 1000000:
             state = self.env.reset()
-            # print("reset shape: ", state.shape)
+            reset_state = state
             buffer_s, buffer_a, buffer_r = [], [], []
             ep_r = 0.
             while True:
+
+                # if (state.__array__() == reset_state.__array__()).all():
+                #     flag = True
+
                 # if self.name == 'w00':
                 self.env.render()
 
@@ -184,18 +196,23 @@ class Worker(mp.Process):
                 state = torch.tensor(state)
                 state = state.squeeze()
                 state = state.unsqueeze(0)
-                print(self.name, end=" ")
-                action = self.local_net.choose_action(obs_to_torch(state))
+
+                action, p = self.local_net.choose_action(obs_to_torch(state).transpose(1, 3))
+
+                if self.name == 'w00':
+                    print(self.name, p, action)
+                #     flag = False
+
                 next_state, reward, done, info = self.env.step(action)
 
-                next_state = next_state.__array__()
-                next_state = torch.tensor(next_state)
-                next_state = next_state.squeeze()
-                next_state = next_state.unsqueeze(0)
-                next_state = obs_to_torch(next_state)
+                # next_state = next_state.__array__()
+                # next_state = torch.tensor(next_state)
+                # next_state = next_state.squeeze()
+                # next_state = next_state.unsqueeze(0)
+                # next_state = obs_to_torch(next_state)
                 # torch.set_printoptions(profile="full")
                 # print("compare")
-                # print(torch.eq(torch.tensor(state).squeeze(), torch.tensor(next_state).squeeze()))
+                # print(torch.eq(torch.tensor(state).squeeze(), torch.tensor(next_state).squeeze()).all())
 
                 # reward = clip_reward(reward)
 
@@ -205,11 +222,11 @@ class Worker(mp.Process):
                     done = True
                 self.lives = new_lives
 
-                if reset:
+                if reset and self.name == "w00":
                     print("----------")
 
-                if done:
-                    reward = 0
+                # if done:
+                #     reward = 0
 
                 ep_r += reward
 
@@ -217,9 +234,9 @@ class Worker(mp.Process):
                 buffer_a.append(action)
                 buffer_r.append(reward)
 
-                if total_step % 10 == 0 or reset:
+                if total_step % 5 == 0 or reset:
                     # Sync
-                    sync(self.optimizer, self.local_net, self.global_net, reset, next_state, buffer_s, buffer_a,
+                    sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a,
                          buffer_r, 0.99)
                     buffer_s, buffer_a, buffer_r = [], [], []
 
@@ -237,7 +254,7 @@ if __name__ == "__main__":
     global_net = A3C()
     global_net.share_memory()
     # optimizer = torch.optim.Adam(global_net.parameters(), lr=1e-4)
-    optimizer = SharedAdam(global_net.parameters(), lr=5e-4)
+    optimizer = SharedAdam(global_net.parameters(), lr=1e-3)
     # optimizer.share_memory()
     global_ep = mp.Value('i', 0)
     global_ep_r = mp.Value('d', 0.)
