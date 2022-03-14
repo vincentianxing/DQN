@@ -150,7 +150,7 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
     loss.backward()
 
     # Clip
-    torch.nn.utils.clip_grad_norm_(local_net.parameters(), 20)
+    torch.nn.utils.clip_grad_norm_(local_net.parameters(), max_norm=0.5)
 
     for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
         global_param._grad = local_param.grad
@@ -188,7 +188,7 @@ class Worker(mp.Process):
 
     def run(self):
         total_step = 1
-        while self.g_ep.value < 5000:
+        while self.g_ep.value < 4000:
             state = self.env.reset()
             buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
             ep_r = 0.
@@ -216,7 +216,7 @@ class Worker(mp.Process):
                 buffer_r.append(reward)
                 buffer_log_pi.append(log_pi)
 
-                if total_step % 5 == 0 or done:
+                if total_step % 10 == 0 or done:
                     # sync
                     # if len(buffer_a) != 1:
                     sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a,
