@@ -62,12 +62,12 @@ class Net(nn.Module):
     def loss_func(self, state, action, state_value):
         self.train()
         logits, values = self.forward(state)
-        td_error = state_value - values
-        value_loss = td_error.pow(2)
+        advantage = state_value - values
+        value_loss = advantage.pow(2)
 
         prob = F.softmax(logits, dim=1)
         m = self.distribution(prob)
-        exp_v = m.log_prob(action) * td_error.detach().squeeze()
+        exp_v = m.log_prob(action) * advantage.detach().squeeze()
         policy_loss = -exp_v
         total_loss = (value_loss + policy_loss).mean()
         return total_loss
