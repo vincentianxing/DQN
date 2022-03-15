@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Device
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,9 +43,9 @@ STEPS = 128  # HORIZON
 EPOCHS = 4
 N_WORKERS = 8
 BATCH_SIZE = N_WORKERS * STEPS
-MINI_BATCH_SIZE = N_WORKERS * 32  # <= 8 * 128
-LEARNING_RATE = 3e-4
-UPDATES = 4000
+MINI_BATCH_SIZE = BATCH_SIZE // 8  # <= 8 * 128
+LEARNING_RATE = 1e-3
+UPDATES = 10000
 
 
 class Net(nn.Module):
@@ -89,20 +90,21 @@ class Net(nn.Module):
     def normalize_advantage(self, adv):
         return (adv - adv.mean()) / (adv.std() + 1e-8)
 
-    def loss_PPO(self, states, actions, state_values, log_pis_old):
+    def loss_ppo(self, batch):
         self.train()
-        logits, values = self.forward(states)
-        prob = F.softmax(logits, dim=1)
+        logits, values = self.forward(batch['obs'])
+        prob = F.softmax(logits)
+        # print(prob)
         pi = self.distribution(prob)
 
-        log_pis = pi.log_prob(actions)
-        advantages = state_values - values
+        log_pis = pi.log_prob(batch['actions'])
+        advantages = batch['advantages']
         advantages_normalized = self.normalize_advantage(advantages)
 
         # Calculate L_clip for policy loss
-        ratio = torch.exp(log_pis - log_pis_old)
+        ratio = torch.exp(log_pis - batch['log_pis'])
         ratio_clipped = ratio.clamp(min=1.0 - CLIP_RANGE,
-                                 max=1.0 + CLIP_RANGE)
+                                    max=1.0 + CLIP_RANGE)
         policy_loss = torch.min(ratio * advantages,
                                 ratio_clipped * advantages)
         policy_loss = policy_loss.mean()
@@ -112,8 +114,14 @@ class Net(nn.Module):
         entropy_bonus = entropy_bonus.mean()
 
         # Calculate L_vf for value loss
-        value_loss = advantages.pow(2)
+        value_loss = (batch['values'] - values).pow(2)
         value_loss = value_loss.mean()
+
+        # sampled_return = batch['values'] + batch['advantages']
+        # clipped_value = batch['values'] + (values - batch['values']).clamp(min=-CLIP_RANGE,
+        #                                                                    max=CLIP_RANGE)
+        # vf_loss = torch.max((values - sampled_return) ** 2, (clipped_value - sampled_return) ** 2)
+        # value_loss = 0.5 * vf_loss.mean()
 
         # Calculate total loss = L_clip + L_vf + L_entropy
         loss = -(policy_loss - VF_COEFF * value_loss + ENTROPY_COEFF * entropy_bonus)
@@ -133,43 +141,33 @@ def set_init(layers):
         nn.init.constant_(layer.bias, 0.)
 
 
-def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a, buffer_r, buffer_log_pi, gamma):
-    if done:
-        state_value = 0.  # terminal state
-    else:
-        state_value = local_net.forward(v_wrap(next_state[None, :]))[-1].data.numpy()[0, 0]
+def train(optimizer, local_net, global_net, samples):
+    # Training based on samples
+    for _ in range(1):
+        # shuffle for each epoch
+        indexes = torch.randperm(STEPS) # BATCH_SIZE
+        for start in range(0, STEPS, MINI_BATCH_SIZE):
+            # get mini batch
+            end = start + MINI_BATCH_SIZE
+            mini_batch_indexes = indexes[start: end]
+            mini_batch = {}
+            for k, v in samples.items():
+                for i in mini_batch_indexes:
+                    mini_batch[k] = v[mini_batch_indexes[i]]
 
-    # Store in buffer
-    buffer_v_target = []
-    for r in buffer_r[::-1]:  # reverse buffer r
-        state_value = r + gamma * state_value
-        buffer_v_target.append(state_value)
-    buffer_v_target.reverse()
+            # train
+            loss = local_net.loss_ppo(mini_batch)
 
-    # loss = local_net.loss_func(
-    #     v_wrap(np.vstack(buffer_s)),
-    #     v_wrap(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else v_wrap(np.vstack(buffer_a)),
-    #     v_wrap(np.array(buffer_v_target)[:, None]))
+            optimizer.zero_grad()
+            torch.autograd.set_detect_anomaly(True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(local_net.parameters(), max_norm=0.5)
+            for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
+                global_param._grad = local_param.grad
+            optimizer.step()
 
-    loss = local_net.loss_PPO(
-        v_wrap(np.vstack(buffer_s)),
-        v_wrap(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else v_wrap(np.vstack(buffer_a)),
-        v_wrap(np.array(buffer_v_target)[:, None]),
-        v_wrap(np.array(buffer_log_pi)))
-
-    # calculate local gradients and push local parameters to global
-    optimizer.zero_grad()
-    loss.backward()
-
-    # Clip
-    torch.nn.utils.clip_grad_norm_(local_net.parameters(), max_norm=0.5)
-
-    for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
-        global_param._grad = local_param.grad
-    optimizer.step()
-
-    # pull global parameters
-    local_net.load_state_dict(global_net.state_dict())
+        # Pull global parameters
+        local_net.load_state_dict(global_net.state_dict())
 
 
 def record(global_ep, global_ep_r, ep_r, res_queue, name):
@@ -185,6 +183,7 @@ def record(global_ep, global_ep_r, ep_r, res_queue, name):
         name,
         "Ep:", global_ep.value,
         "| Ep_r: %.0f" % global_ep_r.value,
+        "| ", ep_r
     )
 
 
@@ -194,58 +193,89 @@ class Worker(mp.Process):
         self.name = 'w%02i' % name
         self.g_ep, self.g_ep_r, self.res_queue = global_ep, global_ep_r, res_queue
         self.global_net, self.optimizer = global_net, optimizer
-        self.local_net = Net(input_size, n_actions)  # local network
+        self.local_net = Net(input_size, n_actions)
         self.env = gym.make('CartPole-v0').unwrapped
-        # print(self.env.unwrapped.get_action_meanings())
+
+    def calculate_advantages(self, next_state, buffer_r, buffer_done, buffer_v):
+        adv_buffer = []
+        last_adv = 0
+        _, last_values = self.local_net.forward(v_wrap(next_state[None, :]))
+
+        for t in reversed(range(STEPS)):
+            # terminal state mask
+            mask = 1.0 - buffer_done[t]
+            last_values = last_values * mask
+            last_adv = last_adv * mask
+
+            delta = buffer_r[t] + GAMMA * last_values - buffer_v[t]
+            last_adv = delta + GAMMA * LAMBDA * last_adv
+            adv_buffer.append(last_adv)
+            last_values = buffer_v[t]
+
+        # TODO: check adv_buffer.reverse()
+        adv_buffer.reverse()
+        return adv_buffer
 
     def run(self):
-        total_step = 1
-        while self.g_ep.value < 4000:
+        while self.g_ep.value < UPDATES:
 
-            # TODO: Run pi_old for STEPS
+            # Sampling
+            buffer_s = []
+            buffer_a = []
+            buffer_r = []
+            buffer_done = []
+            buffer_log_pi = []
+            buffer_v = []
+            buffer_adv = []
             state = self.env.reset()
-            buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
             ep_r = 0.
 
-            while True:
-                # if self.name == 'w00':
-                #     self.env.render()
+            # Run old policy for STEPS
+            for t in range(STEPS):
+                with torch.no_grad():
+                    # Choose action
+                    action = self.local_net.choose_action(v_wrap(state[None, :]))
 
-                action = self.local_net.choose_action(v_wrap(state[None, :]))
+                    # Step with old policy
+                    next_state, reward, done, info = self.env.step(action)
+                    # if done:
+                    #     reward = -1
 
-                next_state, reward, done, info = self.env.step(action)
-                if done:
-                    reward = -1
+                    # Calculate log_pi
+                    logits, values = self.local_net.forward(v_wrap(state[None, :]))
+                    prob = F.softmax(logits, dim=1)
+                    pi = self.local_net.distribution(prob)
+                    a = pi.sample()
+                    log_pi = pi.log_prob(a).detach()
 
-                # Calculate log_pi
-                logits, values = self.local_net.forward(v_wrap(state[None, :]))
-                prob = F.softmax(logits, dim=1)
-                pi = self.local_net.distribution(prob)
-                a = pi.sample()
-                log_pi = pi.log_prob(a).detach()
+                    # Add to buffer
+                    buffer_a.append(action)
+                    buffer_s.append(state)
+                    buffer_r.append(reward)
+                    buffer_done.append(done)
+                    buffer_log_pi.append(log_pi)
+                    buffer_v.append(values)
+                    ep_r += reward
 
-                # TODO: Calculate advantage estimates
+                    state = next_state
 
-                ep_r += reward
-                buffer_a.append(action)
-                buffer_s.append(state)
-                buffer_r.append(reward)
-                buffer_log_pi.append(log_pi)
+            # Calculate advantage estimates
+            buffer_adv = self.calculate_advantages(next_state, buffer_r, buffer_done, buffer_v)
 
-                # TODO: Optimize surrogate with EPOCHS and MINIBATCH
+            samples = {
+                'obs': v_wrap(np.vstack(buffer_s)),
+                'actions': v_wrap(np.array(buffer_a), dtype=np.int64) if buffer_a[0].dtype == np.int64 else v_wrap(
+                    np.vstack(buffer_a)),
+                'values': v_wrap(np.array(buffer_v)[:, None]),
+                'log_pis': v_wrap(np.array(buffer_log_pi)),
+                'advantages': buffer_adv
+            }
 
-                if total_step % 5 == 0 or done:
-                    # sync
-                    sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a,
-                         buffer_r, buffer_log_pi, 0.99)  # GAMMA
-                    buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
+            # Training
+            train(self.optimizer, self.local_net, self.global_net, samples)
 
-                    if done:  # done and print information
-                        record(self.g_ep, self.g_ep_r, ep_r, self.res_queue, self.name)
-                        break
-
-                state = next_state
-                total_step += 1
+            if done:  # done and print information
+                record(self.g_ep, self.g_ep_r, ep_r, self.res_queue, self.name)
 
         self.res_queue.put(None)
 
@@ -253,13 +283,13 @@ class Worker(mp.Process):
 if __name__ == "__main__":
     global_net = Net(input_size, n_actions)  # global network
     global_net.share_memory()  # share the global parameters in multiprocessing
-    optimizer = SharedAdam(global_net.parameters(), lr=1e-3)  # global optimizer
+    optimizer = SharedAdam(global_net.parameters(), lr=LEARNING_RATE)  # global optimizer
     global_ep = mp.Value('i', 0)
     global_ep_r = mp.Value('d', 0.)
     res_queue = mp.Queue()
 
     # parallel training
-    workers = [Worker(global_net, optimizer, global_ep, global_ep_r, res_queue, i) for i in range(mp.cpu_count())]
+    workers = [Worker(global_net, optimizer, global_ep, global_ep_r, res_queue, i) for i in range(N_WORKERS)]
     [w.start() for w in workers]
     res = []  # record episode reward
 

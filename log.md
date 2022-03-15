@@ -1,5 +1,8 @@
 # Log
 
+## PPO issues
+* cannot backward twice?
+
 ## Cython
 cdef char *s
 cdef float x = 0.5 (single precision)
