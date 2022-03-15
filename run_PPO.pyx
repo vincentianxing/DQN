@@ -1,4 +1,4 @@
-# PPO implementation for gym env
+# PPO implementation for Honors project
 # Vincent Zhu
 
 import torch
@@ -8,6 +8,7 @@ import torch.multiprocessing as mp
 from torch.multiprocessing import Queue, set_start_method
 from shared_adam import SharedAdam
 import numpy as np
+cimport numpy as np
 import gym
 import os
 import matplotlib.pyplot as plt
@@ -26,13 +27,13 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 os.environ["OMP_NUM_THREADS"] = "1"
 env = gym.make('CartPole-v0')
-# print(type(env))
-# exit()
-input_size = env.observation_space.shape[0]
-n_actions = env.action_space.n
+cdef int input_size = env.observation_space.shape[0]
+cdef int n_actions = env.action_space.n
 
+cdef class Net(nn.Module):
 
-class Net(nn.Module):
+    cdef int s_dim, a_dim
+
     def __init__(self, s_dim, a_dim):
         super(Net, self).__init__()
         self.s_dim = s_dim
@@ -151,7 +152,7 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
     loss.backward()
 
     # Clip
-    torch.nn.utils.clip_grad_norm_(local_net.parameters(), 0.5)
+    torch.nn.utils.clip_grad_norm_(local_net.parameters(), max_norm=0.5)
 
     for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
         global_param._grad = local_param.grad
@@ -189,7 +190,7 @@ class Worker(mp.Process):
 
     def run(self):
         total_step = 1
-        while self.g_ep.value < 4000:
+        while self.g_ep.value < 3000:
             state = self.env.reset()
             buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
             ep_r = 0.
@@ -237,7 +238,7 @@ class Worker(mp.Process):
 if __name__ == "__main__":
     global_net = Net(input_size, n_actions)  # global network
     global_net.share_memory()  # share the global parameters in multiprocessing
-    optimizer = SharedAdam(global_net.parameters(), lr=1e-3)  # global optimizer
+    optimizer = SharedAdam(global_net.parameters(), lr=2e-3)  # global optimizer
     global_ep = mp.Value('i', 0)
     global_ep_r = mp.Value('d', 0.)
     res_queue = mp.Queue()

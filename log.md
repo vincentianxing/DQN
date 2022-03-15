@@ -1,5 +1,17 @@
 # Log
 
+## Cython
+cdef char *s
+cdef float x = 0.5 (single precision)
+cdef double x = 63.4 (double precision)
+cdef list names
+cdef dict goals_for_each_play
+cdef object card_deck
+
+def — regular python function, calls from Python only.
+cdef — Cython only functions which can’t be accessed from python-only code i.e must be called within Cython
+cpdef — C and Python. Can be accessed from both C and Python
+
 `$dmeseg`
 * `[599691.745183] python3 invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0`
 * `[599691.745469] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/user.slice/user-10016.slice/user@10016.service,task=python3,pid=1478466,uid=10016`
