@@ -31,6 +31,21 @@ env = gym.make('CartPole-v0')
 input_size = env.observation_space.shape[0]
 n_actions = env.action_space.n
 
+# Hyperparameters
+GAMMA = 0.99
+LAMBDA = 0.95
+CLIP_RANGE = 0.2
+VF_COEFF = 0.5  # 1
+ENTROPY_COEFF = 0.01
+
+STEPS = 128  # HORIZON
+EPOCHS = 4
+N_WORKERS = 8
+BATCH_SIZE = N_WORKERS * STEPS
+MINI_BATCH_SIZE = N_WORKERS * 32  # <= 8 * 128
+LEARNING_RATE = 3e-4
+UPDATES = 4000
+
 
 class Net(nn.Module):
     def __init__(self, s_dim, a_dim):
@@ -86,9 +101,8 @@ class Net(nn.Module):
 
         # Calculate L_clip for policy loss
         ratio = torch.exp(log_pis - log_pis_old)
-        clip_range = 0.2
-        ratio_clipped = ratio.clamp(min=1.0 - clip_range,
-                                 max=1.0 + clip_range)
+        ratio_clipped = ratio.clamp(min=1.0 - CLIP_RANGE,
+                                 max=1.0 + CLIP_RANGE)
         policy_loss = torch.min(ratio * advantages,
                                 ratio_clipped * advantages)
         policy_loss = policy_loss.mean()
@@ -96,16 +110,13 @@ class Net(nn.Module):
         # Calculate entropy bonus
         entropy_bonus = pi.entropy()
         entropy_bonus = entropy_bonus.mean()
-        # print("entropy_bonus: ", entropy_bonus)
 
         # Calculate L_vf for value loss
-        # TODO: use another estimator for recurrent neural networks
         value_loss = advantages.pow(2)
         value_loss = value_loss.mean()
-        # print("value_loss: ", value_loss)
 
         # Calculate total loss = L_clip + L_vf + L_entropy
-        loss = -(policy_loss - 0.5 * value_loss + 0.01 * entropy_bonus)
+        loss = -(policy_loss - VF_COEFF * value_loss + ENTROPY_COEFF * entropy_bonus)
 
         return loss
 
@@ -151,7 +162,7 @@ def sync(optimizer, local_net, global_net, done, next_state, buffer_s, buffer_a,
     loss.backward()
 
     # Clip
-    torch.nn.utils.clip_grad_norm_(local_net.parameters(), 0.5)
+    torch.nn.utils.clip_grad_norm_(local_net.parameters(), max_norm=0.5)
 
     for local_param, global_param in zip(local_net.parameters(), global_net.parameters()):
         global_param._grad = local_param.grad
@@ -190,6 +201,8 @@ class Worker(mp.Process):
     def run(self):
         total_step = 1
         while self.g_ep.value < 4000:
+
+            # TODO: Run pi_old for STEPS
             state = self.env.reset()
             buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
             ep_r = 0.
@@ -211,15 +224,18 @@ class Worker(mp.Process):
                 a = pi.sample()
                 log_pi = pi.log_prob(a).detach()
 
+                # TODO: Calculate advantage estimates
+
                 ep_r += reward
                 buffer_a.append(action)
                 buffer_s.append(state)
                 buffer_r.append(reward)
                 buffer_log_pi.append(log_pi)
 
+                # TODO: Optimize surrogate with EPOCHS and MINIBATCH
+
                 if total_step % 5 == 0 or done:
                     # sync
-                    # if len(buffer_a) != 1:
                     sync(self.optimizer, self.local_net, self.global_net, done, next_state, buffer_s, buffer_a,
                          buffer_r, buffer_log_pi, 0.99)  # GAMMA
                     buffer_s, buffer_a, buffer_r, buffer_log_pi = [], [], [], []
