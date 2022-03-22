@@ -65,6 +65,7 @@ class Net(nn.Module):
         logits = self.pi2(pi1)
         v1 = torch.tanh(self.v1(x))
         values = self.v2(v1)
+        print(type(logits))
         return logits, values
 
     def choose_action(self, state):
